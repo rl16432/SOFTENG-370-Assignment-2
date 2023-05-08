@@ -1,3 +1,6 @@
 device_file
 before
 display
+after
+beforeTest
+test

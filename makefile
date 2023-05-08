@@ -19,3 +19,6 @@ after: afterTest.c fileSystem.c device.c
 
 clean:
 	rm display test before after
+
+remove_device:
+	rm device_file
