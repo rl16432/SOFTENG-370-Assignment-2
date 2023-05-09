@@ -19,8 +19,6 @@
  */
 extern int file_errno;
 
-void testMa();
-void testRead();
 /*
  * Formats the device for use by this file system.
  * The volume name must be < 64 bytes long.

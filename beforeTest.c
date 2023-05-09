@@ -23,18 +23,18 @@ int main(void) {
 
 	create("/fileA");
 	a2write("/fileA", "aaaaa", 6);
-	// create("/fileB");
-	// a2write("/fileB", "bbbbb", 6);
-	// create("/dir1/fileA");
-	// a2write("/dir1/fileA", "1a1a1a", 7);
-	// char listResult[1024];
-	// list(listResult, "/");
-	// printf("%s\n", listResult);
-	// list(listResult, "/fileA23");
-	// printf("%s\n", listResult);
-	// list(listResult, "/fileA23/file2/file3/file4");
-	// printf("%s\n", listResult);
-	// list(listResult, "/dir1");
-	// printf("%s\n", listResult);
+	create("/fileB");
+	a2write("/fileB", "bbbbb", 6);
+	create("/dir1/fileA");
+	a2write("/dir1/fileA", "1a1a1a", 7);
+	char listResult[1024];
+	list(listResult, "/");
+	printf("%s\n", listResult);
+	list(listResult, "/fileA23");
+	printf("%s\n", listResult);
+	list(listResult, "/fileA23/file2/file3/file4");
+	printf("%s\n", listResult);
+	list(listResult, "/dir1");
+	printf("%s\n", listResult);
 	return EXIT_SUCCESS;
 }
