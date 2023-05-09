@@ -75,9 +75,9 @@ void testRead() {
 }
 
 /*
-* Return next block in the directory and copy entries to entries array
+* Return next block in the directory and copy entries in current block to entries array
 */
-int readDir(int block, struct dir_entry* entries) {
+int readDirBlock(int block, struct dir_entry* entries) {
 	struct block_struct* dir_block = malloc(sizeof(struct block_struct));
 	int next_block;
 
@@ -116,7 +116,6 @@ int formatDirBlock(int block) {
 int formatFileBlock(int block) {
 	struct block_struct* file_block = malloc(sizeof(struct block_struct));
 	blockRead(block, (unsigned char*) file_block);
-
 	file_block->data[0] = '\0';
 	file_block->next_block = -1;
 	file_block->num_dir_entries = 0;
@@ -178,7 +177,7 @@ int getAndUpdateFreeBlock() {
 	return free_block;
 }
 
-int createDirOrFile(int block, int num_entries, char* name, int is_dir) {
+int createDir(int block, int num_entries, char* name) {
 	if (num_entries == MAX_DIR_ENTRIES) {
 		struct block_struct* dir = malloc(sizeof(struct block_struct));
 		blockRead(block, (unsigned char*) dir);
@@ -195,30 +194,63 @@ int createDirOrFile(int block, int num_entries, char* name, int is_dir) {
 		free(dir);
 	}
 	
-	int new_first_block;
+	int new_dir_first_block;
 
 	struct block_struct* dir = malloc(sizeof(struct block_struct));
 	blockRead(block, (unsigned char*) dir);
 
 	struct dir_entry* dir_entries = (struct dir_entry*) dir->data;
 	dir_entries[num_entries].first_block = getAndUpdateFreeBlock();
-	new_first_block = dir_entries[num_entries].first_block;
+	new_dir_first_block = dir_entries[num_entries].first_block;
 	dir_entries[num_entries].size = 0;
 	strncpy(dir_entries[num_entries].name, name, MAX_NAME_LENGTH);
 
 	dir->num_dir_entries = num_entries + 1;
 	blockWrite(block, (unsigned char*) dir);
 	
-	// Format new block as directory or file
-	if (is_dir) {
-		formatDirBlock(dir_entries[num_entries].first_block);
-	} else {
-		formatFileBlock(dir_entries[num_entries].first_block);
-	}
+	formatDirBlock(dir_entries[num_entries].first_block);
 
 	free(dir);
 
-	return new_first_block;
+	return new_dir_first_block;
+}
+
+int createFile(int block, int num_entries, char* name) {
+	if (num_entries == MAX_DIR_ENTRIES) {
+		struct block_struct* dir = malloc(sizeof(struct block_struct));
+		blockRead(block, (unsigned char*) dir);
+
+		dir->next_block = getAndUpdateFreeBlock();
+		blockWrite(block, (unsigned char*) dir);
+
+		formatDirBlock(dir->next_block);
+
+		// Set variables to take in new block in next section
+		block = dir->next_block;
+		num_entries = 0;
+
+		free(dir);
+	}
+	
+	int new_dir_first_block;
+
+	struct block_struct* dir = malloc(sizeof(struct block_struct));
+	blockRead(block, (unsigned char*) dir);
+
+	struct dir_entry* dir_entries = (struct dir_entry*) dir->data;
+	dir_entries[num_entries].first_block = getAndUpdateFreeBlock();
+	new_dir_first_block = dir_entries[num_entries].first_block;
+	dir_entries[num_entries].size = 0;
+	strncpy(dir_entries[num_entries].name, name, MAX_NAME_LENGTH);
+
+	dir->num_dir_entries = num_entries + 1;
+	blockWrite(block, (unsigned char*) dir);
+	
+	formatDirBlock(dir_entries[num_entries].first_block);
+
+	free(dir);
+
+	return new_dir_first_block;
 }
 
 /*
@@ -256,6 +288,7 @@ int format(char *volumeName) {
 	root_dir.next_block = -1;
 	root_dir.next_free_block = 3;
 	root_dir.num_dir_entries = 0;
+
 	struct dir_entry root_entries[MAX_DIR_ENTRIES] = {};
 	memcpy(root_dir.data, root_entries, sizeof(root_entries));
 
@@ -295,28 +328,32 @@ int volumeName(char *result) {
 int create(char *pathName) {
 	char* temp_path = pathName + 1;
 	char* dir_pos = strchr(temp_path, '/');
+
 	int curr_dir_block_num = 2;
-	
+	int next_block;
+	int previous_block;
+	int dir_exists;
+	int num_dir_entries;
+
+	struct dir_entry* entries = malloc(MAX_DIR_ENTRIES * sizeof(struct dir_entry));
+
 	// Iterate through directories in path
 	while (dir_pos != NULL) {
-		struct dir_entry* entries = malloc(MAX_DIR_ENTRIES * sizeof(struct dir_entry));
-
 		// Get each directory name
 		char* path = malloc(8);
 		strncpy(path, temp_path, dir_pos - temp_path);
 
 		// next_block: next block belonging to same directory
-		int next_block = curr_dir_block_num;
-		int previous_block = curr_dir_block_num;
-		int dir_exists = 0;
-		int num_dir_entries;
+		next_block = curr_dir_block_num;
+		previous_block = curr_dir_block_num;
+		dir_exists = 0;
 
 		while (next_block != -1) {
 			// Number of directory entries in CURRENT block (0 to 3)
 			num_dir_entries = getNumDirEntries(next_block);
 			previous_block = next_block;
-			next_block = readDir(next_block, entries);
-			for (int i = 0; i < MAX_DIR_ENTRIES; i++) {
+			next_block = readDirBlock(next_block, entries);
+			for (int i = 0; i < num_dir_entries; i++) {
 				if (strcmp(entries[i].name, path) == 0) {
 					dir_exists = 1;
 					curr_dir_block_num = entries[i].first_block;
@@ -328,21 +365,123 @@ int create(char *pathName) {
 
 		// If directory doesn't exist, create it
 		if (!dir_exists) {
-			curr_dir_block_num = createDirOrFile(previous_block, num_dir_entries, path, 1);
+			curr_dir_block_num = createDir(previous_block, num_dir_entries, path);
 		}
-
-		printf("%s\n", path);
 		temp_path = dir_pos + 1;
-		
+	
 		free(path);
-		free(entries);
 		dir_pos = strchr(temp_path, '/');
 	}
 
 	// Create file
+	next_block = curr_dir_block_num;
+	previous_block = curr_dir_block_num;
+	int file_exists = 0;
 
+	while (next_block != -1) {
+		// Number of directory entries in CURRENT block (0 to 3)
+		num_dir_entries = getNumDirEntries(next_block);
+		previous_block = next_block;
+		next_block = readDirBlock(next_block, entries);
+		for (int i = 0; i < num_dir_entries; i++) {
+			if (strcmp(entries[i].name, temp_path) == 0) {
+				file_exists = 1;
+				curr_dir_block_num = entries[i].first_block;
+				next_block = -1;
+				break;
+			}
+		}
+	}
+
+	// If file doesn't exist, create it
+	if (!file_exists) {
+		curr_dir_block_num = createFile(previous_block, num_dir_entries, temp_path);
+	}
+	else {
+		printf("File already exists\n");
+	}
+
+	free(entries);
+	return 0;
+}
+
+/*
+* Returns the block number of the first block of the directory
+*/
+int findDir(char* directoryName) {
+	if (strcmp(directoryName, "/") == 0) {
+		return 2;
+	}
+
+	char* temp_path = directoryName + 1;
+	char* dir_pos = strchr(temp_path, '/');
+
+	int curr_dir_block_num = 2;
+	int next_block;
+	int dir_exists;
+	int num_dir_entries;
+
+	struct dir_entry* entries = malloc(MAX_DIR_ENTRIES * sizeof(struct dir_entry));
+
+	// Iterate through directories in path
+	while (dir_pos != NULL) {
+		// Get each directory name
+		char* path = malloc(8);
+		strncpy(path, temp_path, dir_pos - temp_path);
+
+		// next_block: next block belonging to same directory
+		next_block = curr_dir_block_num;
+		dir_exists = 0;
+
+		while (next_block != -1) {
+			// Number of directory entries in CURRENT block (0 to 3)
+			num_dir_entries = getNumDirEntries(next_block);
+			next_block = readDirBlock(next_block, entries);
+			for (int i = 0; i < num_dir_entries; i++) {
+				if (strcmp(entries[i].name, path) == 0) {
+					dir_exists = 1;
+					curr_dir_block_num = entries[i].first_block;
+					next_block = -1;
+					break;
+				}
+			}
+		}
+
+		// If directory doesn't exist, return error
+		if (!dir_exists) {
+			file_errno = ENOSUCHFILE;
+			return -1;
+		}
+		temp_path = dir_pos + 1;
 	
-	return -1;
+		free(path);
+		dir_pos = strchr(temp_path, '/');
+	}
+
+	next_block = curr_dir_block_num;
+	dir_exists = 0;
+
+	while (next_block != -1) {
+		// Number of directory entries in CURRENT block (0 to 3)
+		num_dir_entries = getNumDirEntries(next_block);
+		next_block = readDirBlock(next_block, entries);
+		for (int i = 0; i < num_dir_entries; i++) {
+			if (strcmp(entries[i].name, temp_path) == 0) {
+				dir_exists = 1;
+				curr_dir_block_num = entries[i].first_block;
+				next_block = -1;
+				break;
+			}
+		}
+	}
+	if (!dir_exists) {
+		file_errno = ENOSUCHFILE;
+		return -1;
+	}
+
+	free(entries);
+
+	return curr_dir_block_num;
 }
 /*
  * Returns a list of all files in the named directory.
@@ -359,6 +498,24 @@ file2	0
  * The directoryName is a full pathname.
  */
 void list(char *result, char *directoryName) {
+	int dir_block_num = findDir(directoryName);
+	sprintf(result, "%s:\n", directoryName);
+
+	if (dir_block_num == -1) {
+		return;
+	}
+	int next_block = dir_block_num;
+	struct dir_entry* entries = malloc(MAX_DIR_ENTRIES * sizeof(struct dir_entry));
+
+	while (next_block != -1) {
+		// Number of directory entries in CURRENT block (0 to 3)
+		int num_dir_entries = getNumDirEntries(next_block);
+		next_block = readDirBlock(next_block, entries);
+		for (int i = 0; i < num_dir_entries; i++) {
+			sprintf(result, "%s%s\t%d\n", result, entries[i].name, entries[i].size);
+		}
+	}
+	free(entries);
 }
 
 /*
@@ -369,6 +526,19 @@ void list(char *result, char *directoryName) {
  * Returns 0 if no problem or -1 if the call failed.
  */
 int a2write(char *fileName, void *data, int length) {
+	char* last_slash = strrchr(fileName, '/');
+	char* directory_name = malloc(strlen(fileName) + 1);
+	
+	strncpy(directory_name, fileName, last_slash + 1 - fileName);
+	directory_name[last_slash + 1 - fileName] = '\0';
+	if (strcmp(directory_name, "/") != 0) {
+		directory_name[last_slash - fileName] = '\0';
+	}
+
+	printf("directory_name: %s\n", directory_name);
+
+	// int dir_block_num = findDir(fileName);
+	free(directory_name);
 	return -1;
 }
 
