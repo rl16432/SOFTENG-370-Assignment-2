@@ -18,7 +18,7 @@
 #define MAX_DIR_ENTRIES 3
 #define MAX_NAME_LENGTH 8
 #define MAX_DATA_SIZE (BLOCK_SIZE - sizeof(int) * 3)
-#define NUM_BLOCKS 500
+#define NUM_BLOCKS 1500
 
 struct dir_entry {
 	char name[8];

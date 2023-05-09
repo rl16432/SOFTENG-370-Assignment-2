@@ -17,7 +17,7 @@
 #include <fcntl.h>
 #include <string.h>
 
-#define NUMBLOCKS	500	// you are allowed to change this value for further testing
+#define NUMBLOCKS	16	// you are allowed to change this value for further testing
 
 #define EBADBLOCK		1
 #define EOPENINGDEVICE	2
