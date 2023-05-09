@@ -9,6 +9,8 @@
                 "-Wall",
                 "-g",
                 "${file}",
+                "test.c",
+                "CuTest.c",
                 "device.c",
                 "fileSystem.c",
                 "-o",

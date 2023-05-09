@@ -1,8 +1,8 @@
 /*
  * fileSystem.c
  *
- *  Modified on: 
- *      Author: Your UPI
+ *  Modified on: 10 May 2023
+ *      Author: rluo154
  * 
  * Complete this file.
  */
@@ -18,7 +18,7 @@
 #define MAX_DIR_ENTRIES 3
 #define MAX_NAME_LENGTH 8
 #define MAX_DATA_SIZE (BLOCK_SIZE - sizeof(int) * 3)
-#define NUM_BLOCKS 16
+#define NUM_BLOCKS 500
 
 struct dir_entry {
 	char name[8];
@@ -250,6 +250,10 @@ int createFile(int block, int num_entries, char* name) {
  * Returns 0 if no problem or -1 if the call failed.
  */
 int format(char *volumeName) {
+	// Reset location pointers
+	memset(location_pointers, 0, sizeof(location_pointers));
+
+	// Store volume name
 	blockWrite(0, (unsigned char*) volumeName);
 	
 	// Store free block number of root directory entries in block 1
@@ -272,7 +276,7 @@ int format(char *volumeName) {
 		blockWrite(i, (unsigned char*) &dir);
 	}
 
-	// format root directory (block 2)
+	// Format root directory (block 2)
 	struct block_struct root_dir;
 	root_dir.next_block = -1;
 	root_dir.next_free_block = 3;
@@ -500,7 +504,10 @@ void list(char *result, char *directoryName) {
 		int num_dir_entries = getNumDirEntries(next_block);
 		next_block = readDirBlock(next_block, entries);
 		for (int i = 0; i < num_dir_entries; i++) {
-			sprintf(result, "%s%s\t%d\n", result, entries[i].name, entries[i].size);
+			char *dir_item = malloc(20);
+			sprintf(dir_item, "%s:\t%d\n", entries[i].name, entries[i].size);
+			strcat(result, dir_item);
+			free(dir_item);
 		}
 	}
 	free(entries);
@@ -512,6 +519,9 @@ void list(char *result, char *directoryName) {
 int writeToFile(int curr_block_num, void *data, int length, int file_size) {
 	int bytes_to_write = length;
 	int bytes_in_current_block = file_size % MAX_DATA_SIZE;
+	int first_write = 1;
+	char* data_to_write = (char *) data;
+
 	while (bytes_to_write > 0) {
 		int bytes_to_write_to_block = bytes_to_write;
 
@@ -523,14 +533,26 @@ int writeToFile(int curr_block_num, void *data, int length, int file_size) {
 		blockRead(curr_block_num, (unsigned char*) file_block);
 
 		char* result = (char *) malloc(strlen(file_block->data) + bytes_to_write_to_block + 1);
+		char test[120];
+
 
 		strcpy(result, file_block->data);
-        strncat(result, data, bytes_to_write_to_block);
 
-		memcpy(file_block->data, result, strlen(result) + 1);
+		memcpy(test, file_block->data, strlen(file_block->data) + 1);
+		if (first_write && strcmp(file_block->data, "") != 0) {
+			// If this is the first write to the file, we need to add a null terminator
+        	strncpy(result + strlen(result) + 1, data_to_write, bytes_to_write_to_block);
+			memcpy(file_block->data, result, strlen(result) + bytes_to_write_to_block + 1);
+		}
+		else {
+			strncat(result, data_to_write, bytes_to_write_to_block);
+			memcpy(file_block->data, result, strlen(result) + 1);
+		}
+		first_write = 0;
+
 		blockWrite(curr_block_num, (unsigned char*) file_block);
 
-		if (bytes_to_write_to_block > MAX_DATA_SIZE - bytes_in_current_block) {
+		if (bytes_to_write > bytes_to_write_to_block) {
 			curr_block_num = addFileBlock(curr_block_num);
 			bytes_in_current_block = 0;
 		}
@@ -538,6 +560,7 @@ int writeToFile(int curr_block_num, void *data, int length, int file_size) {
 		free(result);
 		free(file_block);
 		
+		data_to_write += bytes_to_write_to_block;
 		bytes_to_write -= bytes_to_write_to_block;
 	}
 	return 0;
@@ -693,24 +716,32 @@ int a2read(char *fileName, void *data, int length) {
 	struct block_struct* file_block = malloc(sizeof(struct block_struct));
 	blockRead(file_block_num, (unsigned char*) file_block);
 
+	// Go to first block that needs to be read from
 	while (curr_location > block_count * MAX_DATA_SIZE) {
 		file_block_num = file_block->next_block;
 		block_count++;
 		blockRead(file_block_num, (unsigned char*) file_block);
 	}
 
+	// Read from multiple blocks until the 'data' reaches its length
 	while (curr_location < end_location) {
 		int bytes_to_read = MAX_DATA_SIZE - curr_location % MAX_DATA_SIZE;
 		if (end_location - curr_location < bytes_to_read) {
 			bytes_to_read = end_location - curr_location;
 		}
 		memcpy(data + curr_location - location_pointers[file_block_num], file_block->data + curr_location % MAX_DATA_SIZE, bytes_to_read);
+
+		blockRead(file_block->next_block, (unsigned char*) file_block);
+
+		block_count++;
 		curr_location += bytes_to_read;
 	}
 
 	// Update location pointer
 	location_pointers[file_block_num] = end_location;
 
+	free(directory_name);
+	free(entries);
 	free(file_block);
 
 	return 0;
@@ -771,6 +802,9 @@ int seek(char *fileName, int location) {
 	}
 
 	location_pointers[file_block_num] = location;
+
+	free(directory_name);
+	free(entries);
 
 	return 0;
 }
