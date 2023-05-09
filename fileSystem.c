@@ -16,16 +16,15 @@
 #include "fileSystem.h"
 
 #define MAX_DIR_ENTRIES 3
+#define MAX_NAME_LENGTH 8
 struct dir_entry {
 	char name[8];
 	int first_block;
 	int size;
-	int num_dir_entries;
 };
 
 struct system_block {
 	int free_block;
-	int num_root_dir_entries;
 };
 
 // typedef struct dir {
@@ -38,6 +37,7 @@ struct block_struct {
 	char data[BLOCK_SIZE - sizeof(int) * 3];
 	int next_block;
 	int next_free_block;
+	int num_dir_entries;
 };
 
 /* The file system error number. */
@@ -49,9 +49,9 @@ void testMa() {
 	root_dir.next_block = -1;
 	root_dir.next_free_block = 3;
 	struct dir_entry testma[MAX_DIR_ENTRIES] = {
-		{"fileA", 1, 6, 0},
-		{"fileB", 2, 6, 0},
-		{"dir1", 3, 0, 1},
+		{"fileA", 1, 6},
+		{"fileB", 2, 6},
+		{"dir1", 3, 0},
 	};
 	memcpy(root_dir.data, testma, sizeof(testma));
 	if (blockWrite(2, (unsigned char*) &root_dir) == -1) {
@@ -71,111 +71,154 @@ void testRead() {
 	printf("%s\n", test[1].name);
 	printf("%s\n", test[2].name);
 
+	free(root_dir);
 }
 
+/*
+* Return next block in the directory and copy entries to entries array
+*/
 int readDir(int block, struct dir_entry* entries) {
-	int next_block = block;
-	int last_block = block;
-	int num_blocks = 0;
-	struct dir_entry* current_pos = entries;
+	struct block_struct* dir_block = malloc(sizeof(struct block_struct));
+	int next_block;
 
-	while (next_block != -1) {
-		num_blocks++;
-		struct block_struct* dir = malloc(sizeof(struct block_struct));
-		
-		if (blockRead(next_block, (unsigned char*) dir) == -1) {
-			file_errno = EOTHER;
-			return -1;
-		}
-
-		// Append entries to entries array
-		memcpy(current_pos, dir->data, sizeof(struct dir_entry) * MAX_DIR_ENTRIES);
-		current_pos = current_pos + MAX_DIR_ENTRIES;
-		
-		last_block = next_block;
-		next_block = dir->next_block;
-
-		free(dir);
-	}
-	return last_block;
-}
-
-int createDir() {
-	int free_block = getFreeBlock();
-	struct block_struct* block_struct = getBlock(free_block);
-	block_struct->next_block = -1;
-	block_struct->next_free_block = -1;
-	if (blockWrite(free_block, (unsigned char*) block_struct) == -1) {
+	if (blockRead(block, (unsigned char*) dir_block) == -1) {
 		file_errno = EOTHER;
-		return -1;
+		return -2;
 	}
-	free(block_struct);
-	return free_block;
+	// Append entries to entries array
+	memcpy(entries, dir_block->data, sizeof(struct dir_entry) * MAX_DIR_ENTRIES);
+	next_block = dir_block->next_block;
+
+	free(dir_block);
+	return next_block;
 }
 
-int getNumRootDirEntries() {
-	struct system_block* system_block = malloc(sizeof(struct system_block));
-	if (blockRead(1, (unsigned char*) system_block) == -1) {
-		file_errno = EOTHER;
-		return -1;
-	}
-	return system_block->num_root_dir_entries;
+/*
+* Sets up a block as a directory block
+*/
+int formatDirBlock(int block) {
+	struct block_struct* dir_block = malloc(sizeof(struct block_struct));
+	blockRead(block, (unsigned char*) dir_block);
+	struct dir_entry dir_entries[MAX_DIR_ENTRIES]= {};
+
+	memcpy(dir_block->data, dir_entries, sizeof(dir_entries));
+	dir_block->next_block = -1;
+	dir_block->num_dir_entries = 0;
+	blockWrite(block, (unsigned char*) dir_block);
+
+	free(dir_block);
+	return 0;
 }
+
+/*
+* Sets up a block as a file block
+*/
+int formatFileBlock(int block) {
+	struct block_struct* file_block = malloc(sizeof(struct block_struct));
+	blockRead(block, (unsigned char*) file_block);
+
+	file_block->data[0] = '\0';
+	file_block->next_block = -1;
+	file_block->num_dir_entries = 0;
+	blockWrite(block, (unsigned char*) file_block);
+
+	free(file_block);
+	return 0;
+}
+
 
 int getFreeBlock() {
-	struct system_block* system_block = malloc(sizeof(struct system_block));
+	struct system_block* system_blk = malloc(BLOCK_SIZE);
 	int free_block;
-	if (blockRead(1, (unsigned char*) system_block) == -1) {
-		file_errno = EOTHER;
-		return -1;
-	}
-	free_block = system_block->free_block;
-	free(system_block);
+
+	blockRead(1, (unsigned char*) system_blk);
+	
+	free_block = system_blk->free_block;
+	free(system_blk);
 
 	return free_block;
 }
 
-struct block_struct* getBlock(int block) {
-	struct block_struct* block_struct = malloc(sizeof(struct block_struct));
-	// block_struct->data = malloc(BLOCK_SIZE);
+
+int getNumDirEntries(int block) {
+	struct block_struct* block_str = malloc(sizeof(struct block_struct));
+	blockRead(block, (unsigned char*) block_str);
 	
-	if (blockRead(block, (unsigned char*) block_struct) == -1) {
-		file_errno = EOTHER;
-		return NULL;
-	}
-	return block_struct;
+	int num_dir_entries = block_str->num_dir_entries;
+	free(block_str);
+	return num_dir_entries;
 }
 
 /* 
- * Update the free block in the system area.
+ * Gets the current free block and update the free block in the system area.
  * Return next free block if no problem, -1 if there is no more free blocks, -2 if the call failed.
  */
 int getAndUpdateFreeBlock() {
 	int free_block = getFreeBlock();
-	int next_free_block;
 
+	if (free_block == -1) {
+		file_errno = ENOROOM;
+		return -1;
+	}
 	// Get next free block
-	struct block_struct* block_struct = getBlock(free_block);
+	struct block_struct* block_str = malloc(sizeof(struct block_struct));
+	blockRead(free_block, (unsigned char*) block_str);
 
 	// Update free block in system area
-	struct system_block* system_block = malloc(sizeof(struct system_block));
-	if (blockRead(1, (unsigned char*) system_block) == -1) {
-		file_errno = EOTHER;
-		return -2;
-	}
-	system_block->free_block = block_struct->next_free_block;
-	next_free_block = block_struct->next_free_block;
+	struct system_block* system_blk = malloc(BLOCK_SIZE);
+	blockRead(1, (unsigned char*) system_blk);
+	system_blk->free_block = block_str->next_free_block;
 
 	// Write to system area
-	if (blockWrite(1, (unsigned char*) system_block) == -1) {
-		file_errno = EOTHER;
-		return -2;
-	};
+	blockWrite(1, (unsigned char*) system_blk);
 
-	free(block_struct);
-	free(system_block);
+	free(block_str);
+	free(system_blk);
 
-	return next_free_block;
+	return free_block;
+}
+
+int createDirOrFile(int block, int num_entries, char* name, int is_dir) {
+	if (num_entries == MAX_DIR_ENTRIES) {
+		struct block_struct* dir = malloc(sizeof(struct block_struct));
+		blockRead(block, (unsigned char*) dir);
+
+		dir->next_block = getAndUpdateFreeBlock();
+		blockWrite(block, (unsigned char*) dir);
+
+		formatDirBlock(dir->next_block);
+
+		// Set variables to take in new block in next section
+		block = dir->next_block;
+		num_entries = 0;
+
+		free(dir);
+	}
+	
+	int new_first_block;
+
+	struct block_struct* dir = malloc(sizeof(struct block_struct));
+	blockRead(block, (unsigned char*) dir);
+
+	struct dir_entry* dir_entries = (struct dir_entry*) dir->data;
+	dir_entries[num_entries].first_block = getAndUpdateFreeBlock();
+	new_first_block = dir_entries[num_entries].first_block;
+	dir_entries[num_entries].size = 0;
+	strncpy(dir_entries[num_entries].name, name, MAX_NAME_LENGTH);
+
+	dir->num_dir_entries = num_entries + 1;
+	blockWrite(block, (unsigned char*) dir);
+	
+	// Format new block as directory or file
+	if (is_dir) {
+		formatDirBlock(dir_entries[num_entries].first_block);
+	} else {
+		formatFileBlock(dir_entries[num_entries].first_block);
+	}
+
+	free(dir);
+
+	return new_first_block;
 }
 
 /*
@@ -186,46 +229,37 @@ int getAndUpdateFreeBlock() {
  * Returns 0 if no problem or -1 if the call failed.
  */
 int format(char *volumeName) {
-	if (blockWrite(0, (unsigned char*) volumeName) == -1) {
-		file_errno = EBADVOLNAME;
-		return -1;
-	}
-
+	blockWrite(0, (unsigned char*) volumeName);
+	
 	// Store free block number of root directory entries in block 1
-	struct system_block system_block;
-	system_block.free_block = 3;
-	system_block.num_root_dir_entries = 0;
-	if (blockWrite(1, (unsigned char*) &system_block) == -1) {
-		file_errno = EOTHER;
-		return -1;
-	};
+	struct system_block system_blk;
+	system_blk.free_block = 3;
+	blockWrite(1, (unsigned char*) &system_blk);
 
 	// Format all free blocks
 	for (int i = 3; i < numBlocks(); i++) {
 		struct block_struct dir;
 		dir.next_block = -1;
 		dir.next_free_block = i + 1;
+		// -2 for neither file nor directory
+		dir.num_dir_entries = -2;
 
 		if (dir.next_free_block == numBlocks()) {
 			dir.next_free_block = -1;
 		}
 
-		if (blockWrite(i, (unsigned char*) &dir) == -1) {
-			file_errno = EOTHER;
-			return -1;
-		}
+		blockWrite(i, (unsigned char*) &dir);
 	}
 
 	// format root directory (block 2)
 	struct block_struct root_dir;
 	root_dir.next_block = -1;
 	root_dir.next_free_block = 3;
+	root_dir.num_dir_entries = 0;
 	struct dir_entry root_entries[MAX_DIR_ENTRIES] = {};
 	memcpy(root_dir.data, root_entries, sizeof(root_entries));
-	if (blockWrite(2, (unsigned char*) &root_dir) == -1) {
-		file_errno = EOTHER;
-		return -1;
-	}
+
+	blockWrite(2, (unsigned char*) &root_dir);
 	
 	return 0;
 }
@@ -236,9 +270,7 @@ int format(char *volumeName) {
  */
 int volumeName(char *result) {
 	// struct block_struct* test = malloc(500);
-	if (blockRead(0, (unsigned char*) result) == -1) {
-		return -1;
-	}
+	blockRead(0, (unsigned char*) result);
 	// blockRead(4, (unsigned char*) test);
 	// printf("%d\n", test->next_free_block);
 
@@ -261,82 +293,54 @@ int volumeName(char *result) {
  * Returns 0 if no problem or -1 if the call failed.
  */
 int create(char *pathName) {
-	char* temp_path = pathName;
+	char* temp_path = pathName + 1;
 	char* dir_pos = strchr(temp_path, '/');
 	int curr_dir_block_num = 2;
-	int num_dir_entries = 0;
 	
+	// Iterate through directories in path
 	while (dir_pos != NULL) {
-		// struct block_struct* curr_dir = malloc(500);
 		struct dir_entry* entries = malloc(MAX_DIR_ENTRIES * sizeof(struct dir_entry));
 
 		// Get each directory name
 		char* path = malloc(8);
 		strncpy(path, temp_path, dir_pos - temp_path);
 
-		if (curr_dir_block_num == 2) {
-			num_dir_entries = getNumRootDirEntries();
-		}
-
-		// Check if directory exists
-		int last_block = readDir(curr_dir_block_num, entries);
+		// next_block: next block belonging to same directory
+		int next_block = curr_dir_block_num;
+		int previous_block = curr_dir_block_num;
 		int dir_exists = 0;
-		for (int i = 0; i < num_dir_entries; i++) {
-			printf("%s\n", entries[i].name);
-			if (strcmp(entries[i].name, path) == 0) {
-				dir_exists = 1;
-				curr_dir_block_num = entries[i].first_block;
-				num_dir_entries = entries[i].num_dir_entries;
-				break;
+		int num_dir_entries;
+
+		while (next_block != -1) {
+			// Number of directory entries in CURRENT block (0 to 3)
+			num_dir_entries = getNumDirEntries(next_block);
+			previous_block = next_block;
+			next_block = readDir(next_block, entries);
+			for (int i = 0; i < MAX_DIR_ENTRIES; i++) {
+				if (strcmp(entries[i].name, path) == 0) {
+					dir_exists = 1;
+					curr_dir_block_num = entries[i].first_block;
+					next_block = -1;
+					break;
+				}
 			}
 		}
 
 		// If directory doesn't exist, create it
 		if (!dir_exists) {
-			// Get free block
-			
-			int free_block = getFreeBlock();
-			if (free_block == -1) {
-				file_errno = ENOSPC;
-				return -1;
-			}
-
-			// Update free block
-			if (updateFreeBlock() == -1) {
-				return -1;
-			}
-
-			// Update parent directory
-			struct dir_entry new_dir_entry;
-			strncpy(new_dir_entry.name, path, 8);
-			new_dir_entry.first_block = free_block;
-			new_dir_entry.num_dir_entries = 0;
-			entries[num_dir_entries] = new_dir_entry;
-			num_dir_entries++;
-
-			// Update parent directory block
-			struct block_struct* block_struct = getBlock(curr_dir_block_num);
-			memcpy(block_struct->data, entries, MAX_DIR_ENTRIES * sizeof(struct dir_entry));
-			// block_struct->data = (void*) entries;
-			// if (blockWrite(2, (unsigned char*) &root_dir) == -1) {
-			// 	file_errno = EOTHER;
-			// 	return -1;
-			// }
+			curr_dir_block_num = createDirOrFile(previous_block, num_dir_entries, path, 1);
 		}
 
-		struct block_struct* block_struct = getBlock(curr_dir_block_num);
-		memcpy(block_struct->data, entries, MAX_DIR_ENTRIES * sizeof(struct dir_entry));
-		// block_struct->data = (void*) entries;
-		// if (blockWrite(2, (unsigned char*) &root_dir) == -1) {
-		// 	file_errno = EOTHER;
-		// 	return -1;
-		// }
 		printf("%s\n", path);
 		temp_path = dir_pos + 1;
 		
+		free(path);
 		free(entries);
 		dir_pos = strchr(temp_path, '/');
 	}
+
+	// Create file
+
 	
 	return -1;
 }
