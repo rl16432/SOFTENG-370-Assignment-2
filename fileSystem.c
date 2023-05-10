@@ -15,9 +15,9 @@
 #include "device.h"
 #include "fileSystem.h"
 
-#define MAX_DIR_ENTRIES 3
 #define MAX_NAME_LENGTH 8
 #define MAX_DATA_SIZE (BLOCK_SIZE - sizeof(int) * 3)
+#define MAX_DIR_ENTRIES (MAX_DATA_SIZE / sizeof(struct dir_entry))
 #define NUM_BLOCKS 1500
 
 struct dir_entry {
@@ -63,8 +63,8 @@ int readDirBlock(int block, struct dir_entry* entries) {
 }
 
 /*
-* Sets up a block as a directory block
-*/
+ * Sets up a block as a directory block
+ */
 int formatDirBlock(int block) {
 	struct block_struct* dir_block = malloc(sizeof(struct block_struct));
 	blockRead(block, (unsigned char*) dir_block);
@@ -94,6 +94,9 @@ int formatFileBlock(int block) {
 	return 0;
 }
 
+/*
+ * Gets the next free block from the system area
+ */
 int getFreeBlock() {
 	struct system_block* system_blk = malloc(BLOCK_SIZE);
 	int free_block;
@@ -115,7 +118,7 @@ int getAndUpdateFreeBlock() {
 
 	if (free_block == -1) {
 		file_errno = ENOROOM;
-		return -1;
+		return -2;
 	}
 	// Get next free block
 	struct block_struct* block_str = malloc(sizeof(struct block_struct));
@@ -136,8 +139,8 @@ int getAndUpdateFreeBlock() {
 }
 
 /*
-* Adds a new block to the file linked list and returns the new block number
-*/
+ * Adds a new block to the file linked list and returns the new block number
+ */
 int addFileBlock(int block) {
 	struct block_struct* file_block = malloc(sizeof(struct block_struct));
 	blockRead(block, (unsigned char*) file_block);
@@ -155,7 +158,9 @@ int addFileBlock(int block) {
 	return free_block;
 }
 
-
+/*
+ * Gets the number of directory entries in a single directory block (0 to MAX_DIR_ENTRIES)
+ */
 int getNumDirEntries(int block) {
 	struct block_struct* block_str = malloc(sizeof(struct block_struct));
 	blockRead(block, (unsigned char*) block_str);
@@ -165,7 +170,11 @@ int getNumDirEntries(int block) {
 	return num_dir_entries;
 }
 
+/*
+ * Create a new directory in the given block with the given name
+ */
 int createDir(int block, int num_entries, char* name) {
+	// Check if directory is full. Need to allocate a new block for this
 	if (num_entries == MAX_DIR_ENTRIES) {
 		struct block_struct* dir = malloc(sizeof(struct block_struct));
 		blockRead(block, (unsigned char*) dir);
@@ -182,20 +191,25 @@ int createDir(int block, int num_entries, char* name) {
 		free(dir);
 	}
 	
+	// Create new directory entry
 	int new_dir_first_block;
 
+	// Add new directory entry to current directory block
 	struct block_struct* dir = malloc(sizeof(struct block_struct));
 	blockRead(block, (unsigned char*) dir);
 
 	struct dir_entry* dir_entries = (struct dir_entry*) dir->data;
-	dir_entries[num_entries].first_block = getAndUpdateFreeBlock();
-	new_dir_first_block = dir_entries[num_entries].first_block;
+	
+	new_dir_first_block = getAndUpdateFreeBlock();
+
+	dir_entries[num_entries].first_block = new_dir_first_block;
 	dir_entries[num_entries].size = 0;
 	strncpy(dir_entries[num_entries].name, name, MAX_NAME_LENGTH);
-
 	dir->num_dir_entries = num_entries + 1;
+
 	blockWrite(block, (unsigned char*) dir);
-	
+
+	// Format new directory block
 	formatDirBlock(dir_entries[num_entries].first_block);
 
 	free(dir);
@@ -203,6 +217,9 @@ int createDir(int block, int num_entries, char* name) {
 	return new_dir_first_block;
 }
 
+/*
+ * Create a new file in the given block with the given name
+ */
 int createFile(int block, int num_entries, char* name) {
 	// Assign new block to directory if current block is full
 	if (num_entries == MAX_DIR_ENTRIES) {
@@ -227,12 +244,13 @@ int createFile(int block, int num_entries, char* name) {
 	blockRead(block, (unsigned char*) dir);
 
 	struct dir_entry* dir_entries = (struct dir_entry*) dir->data;
-	dir_entries[num_entries].first_block = getAndUpdateFreeBlock();
-	new_file_first_block = dir_entries[num_entries].first_block;
+	new_file_first_block = getAndUpdateFreeBlock();
+
+	dir_entries[num_entries].first_block = new_file_first_block;
 	dir_entries[num_entries].size = 0;
 	strncpy(dir_entries[num_entries].name, name, MAX_NAME_LENGTH);
-
 	dir->num_dir_entries = num_entries + 1;
+
 	blockWrite(block, (unsigned char*) dir);
 	
 	formatFileBlock(dir_entries[num_entries].first_block);
@@ -335,18 +353,19 @@ int create(char *pathName) {
 
 		// next_block: next block belonging to same directory
 		next_block = curr_dir_block_num;
+		// Store last block in directory before next_block reaches -1
 		previous_block = curr_dir_block_num;
 		dir_exists = 0;
 
 		while (next_block != -1) {
-			// Number of directory entries in CURRENT block (0 to 3)
+			// Number of directory entries in CURRENT block (0 to MAX_DIR_ENTRIES)
 			num_dir_entries = getNumDirEntries(next_block);
 			previous_block = next_block;
 			next_block = readDirBlock(next_block, entries);
 			for (int i = 0; i < num_dir_entries; i++) {
 				if (strcmp(entries[i].name, path) == 0) {
-					dir_exists = 1;
 					curr_dir_block_num = entries[i].first_block;
+					dir_exists = 1;
 					next_block = -1;
 					break;
 				}
@@ -375,8 +394,8 @@ int create(char *pathName) {
 		next_block = readDirBlock(next_block, entries);
 		for (int i = 0; i < num_dir_entries; i++) {
 			if (strcmp(entries[i].name, temp_path) == 0) {
-				file_exists = 1;
 				curr_dir_block_num = entries[i].first_block;
+				file_exists = 1;
 				next_block = -1;
 				break;
 			}
@@ -392,13 +411,15 @@ int create(char *pathName) {
 	}
 
 	free(entries);
+	
 	return 0;
 }
 
 /*
- * Returns the block number of the first block of the directory
+ * Returns the block number of the first block of the directory name
  */
 int findDir(char* directoryName) {
+	// Root directory is block 2
 	if (strcmp(directoryName, "/") == 0) {
 		return 2;
 	}
@@ -500,11 +521,10 @@ void list(char *result, char *directoryName) {
 	struct dir_entry* entries = malloc(MAX_DIR_ENTRIES * sizeof(struct dir_entry));
 
 	while (next_block != -1) {
-		// Number of directory entries in CURRENT block (0 to 3)
 		int num_dir_entries = getNumDirEntries(next_block);
 		next_block = readDirBlock(next_block, entries);
 		for (int i = 0; i < num_dir_entries; i++) {
-			char *dir_item = malloc(20);
+			char *dir_item = malloc(30);
 			sprintf(dir_item, "%s:\t%d\n", entries[i].name, entries[i].size);
 			strcat(result, dir_item);
 			free(dir_item);
@@ -520,31 +540,31 @@ int writeToFile(int curr_block_num, void *data, int length, int file_size) {
 	int bytes_to_write = length;
 	int bytes_in_current_block = file_size % MAX_DATA_SIZE;
 	int first_write = 1;
+	// Pointer to the current position which we should begin writing from
 	char* data_to_write = (char *) data;
 
 	while (bytes_to_write > 0) {
 		int bytes_to_write_to_block = bytes_to_write;
-
 		if (bytes_to_write_to_block > MAX_DATA_SIZE - bytes_in_current_block) {
 			bytes_to_write_to_block = MAX_DATA_SIZE - bytes_in_current_block;
 		}
 		
+		// Get data in the current file block
 		struct block_struct* file_block = malloc(sizeof(struct block_struct));
 		blockRead(curr_block_num, (unsigned char*) file_block);
 
 		char* result = (char *) malloc(strlen(file_block->data) + bytes_to_write_to_block + 1);
-		char test[120];
-
 
 		strcpy(result, file_block->data);
 
-		memcpy(test, file_block->data, strlen(file_block->data) + 1);
 		if (first_write && strcmp(file_block->data, "") != 0) {
-			// If this is the first write to the file, we need to add a null terminator
-        	strncpy(result + strlen(result) + 1, data_to_write, bytes_to_write_to_block);
+			// If this is the first write to the file, and the file has already been written to,
+			// we need to keep the null terminator
+      strncpy(result + strlen(result) + 1, data_to_write, bytes_to_write_to_block);
 			memcpy(file_block->data, result, strlen(result) + bytes_to_write_to_block + 1);
 		}
 		else {
+			// Otherwise, we just concatenate the data
 			strncat(result, data_to_write, bytes_to_write_to_block);
 			memcpy(file_block->data, result, strlen(result) + 1);
 		}
@@ -560,7 +580,9 @@ int writeToFile(int curr_block_num, void *data, int length, int file_size) {
 		free(result);
 		free(file_block);
 		
+		// Update the pointer to the current position which we should begin writing from
 		data_to_write += bytes_to_write_to_block;
+		// Update the number of bytes left to write
 		bytes_to_write -= bytes_to_write_to_block;
 	}
 	return 0;
@@ -606,9 +628,9 @@ int a2write(char *fileName, void *data, int length) {
 		next_block = readDirBlock(next_block, entries);
 		for (int i = 0; i < num_dir_entries; i++) {
 			if (strcmp(entries[i].name, final_file_name) == 0) {
-				file_exists = 1;
 				file_block_num = entries[i].first_block;
 				file_size = entries[i].size;
+				file_exists = 1;
 				next_block = -1;
 				position = i;
 				break;
@@ -641,7 +663,7 @@ int a2write(char *fileName, void *data, int length) {
 	memcpy(dir_block->data, entries, sizeof(struct dir_entry) * MAX_DIR_ENTRIES);
 	blockWrite(dir_block_num, (unsigned char*) dir_block);
 
-	// Write data to file
+	// Write data to the last file block
 	writeToFile(next_block, data, length, file_size);
 
 	free(directory_name);
@@ -801,6 +823,7 @@ int seek(char *fileName, int location) {
 		return -1;
 	}
 
+	// Update location pointer
 	location_pointers[file_block_num] = location;
 
 	free(directory_name);
