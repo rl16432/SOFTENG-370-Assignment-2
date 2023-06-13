@@ -431,7 +431,7 @@ int findDir(char* directoryName) {
 		dir_exists = 0;
 
 		while (next_block != -1) {
-			// Number of directory entries in CURRENT block (0 to 3)
+			// Number of directory entries in CURRENT block (0 to MAX_DIR_ENTRIES)
 			num_dir_entries = getNumDirEntries(next_block);
 			next_block = readDirBlock(next_block, entries);
 			for (int i = 0; i < num_dir_entries; i++) {
@@ -459,7 +459,7 @@ int findDir(char* directoryName) {
 	dir_exists = 0;
 
 	while (next_block != -1) {
-		// Number of directory entries in CURRENT block (0 to 3)
+		// Number of directory entries in CURRENT block (0 to MAX_DIR_ENTRIES)
 		num_dir_entries = getNumDirEntries(next_block);
 		next_block = readDirBlock(next_block, entries);
 		for (int i = 0; i < num_dir_entries; i++) {

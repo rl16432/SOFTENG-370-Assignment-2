@@ -6,3 +6,6 @@ beforeTest
 afterTest
 test
 main
+*.zip
+*.docx
+*.pdf
